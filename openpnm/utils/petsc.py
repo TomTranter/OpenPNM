@@ -46,10 +46,10 @@ class PETScSparseLinearSolver(Base):
                    'maxiter': 1000}
         self.settings.update(def_set)
         self.settings.update(settings)
-        self.A = sp.sparse.csr_matrix(A)
+        self.A = A if type(A) is str else sp.sparse.csr_matrix(A)
         self.b = b
         # Matrix of coefficients size
-        self.m, self.n = (self.A).shape
+        self.m, self.n = len(b), len(b)
 
     def _create_solver(self):
         r"""
@@ -146,8 +146,8 @@ class PETScSparseLinearSolver(Base):
 
         # Assign values to the coefficients matrix from the scipy sparse csr
         size_tmp = self.A.shape
-        csr1 = (self.A.indptr[self.Istart:self.Iend+1] -
-                self.A.indptr[self.Istart])  # row indices
+        csr1 = (self.A.indptr[self.Istart:self.Iend+1]
+                - self.A.indptr[self.Istart])  # row indices
         ind1 = self.A.indptr[self.Istart]
         ind2 = self.A.indptr[self.Iend]
         csr2 = self.A.indices[ind1:ind2]  # column indices
@@ -185,7 +185,7 @@ class PETScSparseLinearSolver(Base):
         # Define the petsc rhs vector from the numpy one
         PETSc.Vec.setArray(self.petsc_b, self.b[self.Istart: self.Iend])
 
-    def solve(self, x0=None, atol=None, rtol=None, max_it=None):
+    def solve(self, x0=None, atol=None, rtol=None, max_it=None, save_A_to=None):
         r"""
         This method solves the sparse linear system, converts the
         solution vector from a PETSc.Vec instance to a numpy array,
@@ -224,7 +224,16 @@ class PETScSparseLinearSolver(Base):
         self.x0 = np.zeros_like(self.b) if x0 is None else x0
 
         self._initialize_b_x()
-        self._initialize_A()
+
+        if type(self.A) is not str:
+            self._initialize_A()
+        else:
+            viewer = PETSc.Viewer().createBinary(self.A, 'r')
+            self.petsc_A = PETSc.Mat().load(viewer)
+
+        if save_A_to:
+            viewer = PETSc.Viewer().createBinary(save_A_to, 'w')
+            viewer(self.petsc_A)
 
         self._create_solver()
         self._set_tolerances(atol=atol, rtol=rtol, max_it=max_it)
@@ -241,6 +250,9 @@ class PETScSparseLinearSolver(Base):
 
         # Convert solution vector from PETSc.Vec instance to a numpy array
         self.solution = PETSc.Vec.getArray(self.petsc_s)
+
+        # Store residual
+        self.residual = self.ksp.getResidualNorm()
 
         # Destroy petsc solver, coefficients matrix, rhs, and solution vectors
         PETSc.KSP.destroy(self.ksp)
